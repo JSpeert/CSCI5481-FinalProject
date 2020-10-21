@@ -1,10 +1,10 @@
-# Lecture 13: Selection and Manipulation
+# Lecture 13: Bimanual Interaction
 
 Detailed explanation of this code can be found in the lecture video [LINK TO BE ADDED].
 
 ## Topics
 
-1. Conceptual background
+1. Review of code from Lecture 12
 2. Bimanual position manipulation
 3. Bimanual rotation manipulation
 4. Bimanual scale manipulation
