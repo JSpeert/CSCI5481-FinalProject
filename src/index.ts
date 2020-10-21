@@ -18,12 +18,11 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
 import { Ray } from "@babylonjs/core/Culling/ray";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import { PointerEventTypes, PointerInfo } from "@babylonjs/core/Events/pointerEvents";
+import { InstancedMesh } from "@babylonjs/core/Meshes/instancedMesh";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
 
 // Side effects
 import "@babylonjs/core/Helpers/sceneHelpers";
-
-// Import debug layer
 import "@babylonjs/inspector";
 
 class Game 
@@ -40,9 +39,12 @@ class Game
     private selectionTransform: TransformNode | null;
 
     private laserPointer: LinesMesh | null;
+    private bimanualLine: LinesMesh | null;
 
     private previousLeftControllerPosition: Vector3;
     private previousRightControllerPosition: Vector3;
+
+    private miniatureObject: InstancedMesh | null;
     
     constructor()
     {
@@ -63,9 +65,12 @@ class Game
         this.selectionTransform = null;
         
         this.laserPointer = null;
+        this.bimanualLine = null;
 
         this.previousLeftControllerPosition = Vector3.Zero();
         this.previousRightControllerPosition = Vector3.Zero();
+
+        this.miniatureObject = null;
     }
 
     start() : void 
@@ -120,15 +125,9 @@ class Game
         // Assigns the web XR camera to a member variable
         this.xrCamera = xrHelper.baseExperience.camera;
 
+        // Remove default teleportation and pointer selection
         xrHelper.teleportation.dispose();
         xrHelper.pointerSelection.dispose();
-
-        /* Disabled and implemented in a custom ray caster
-        // Register event handler for selection events (pulling the trigger, clicking the mouse button)
-        this.scene.onPointerObservable.add((pointerInfo) => {
-            this.processPointer(pointerInfo);
-        });
-        */
 
         // Create points for the laser pointer
         var laserPoints = [];
@@ -142,12 +141,25 @@ class Game
         this.laserPointer.visibility = 0;
         this.laserPointer.isPickable = false;
 
+        // Create points for the bimanual line
+        var bimanualPoints = [];
+        bimanualPoints.push(new Vector3(0, 0, 0));
+        bimanualPoints.push(new Vector3(0, 0, 1));
+
+        // Create a dashed line between the two controllers
+        this.bimanualLine = MeshBuilder.CreateDashedLines("bimanualLine", {points: bimanualPoints}, this.scene);
+        this.bimanualLine.color = Color3.Gray();
+        this.bimanualLine.alpha = .5;
+        this.bimanualLine.visibility = 0;
+        this.bimanualLine.isPickable = false;
+
         // This transform will be used to attach objects to the laser pointer
         this.selectionTransform = new TransformNode("selectionTransform", this.scene);
         this.selectionTransform.parent = this.laserPointer;
 
         // Attach the laser pointer to the right controller when it is connected
         xrHelper.input.onControllerAddedObservable.add((inputSource) => {
+            
             if(inputSource.uniqueId.endsWith("right"))
             {
                 this.rightController = inputSource;
@@ -194,35 +206,20 @@ class Game
         this.scene.debugLayer.show(); 
     }
 
-    /* Disabled and implemented in a custom ray caster
-    // Event handler for processing pointer selection events
-    private processPointer(pointerInfo: PointerInfo)
-    {
-        switch (pointerInfo.type) {
-
-            case PointerEventTypes.POINTERDOWN:
-
-                if(this.selectedObject)
-                {
-                    this.selectedObject.disableEdgesRendering();
-                    this.selectedObject = null;
-                }
-
-                // if an object was hit
-                if(pointerInfo.pickInfo?.hit)
-                {
-                    this.selectedObject = pointerInfo.pickInfo.pickedMesh;
-                    this.selectedObject!.enableEdgesRendering();
-                }
-            break;
-        }
-    }
-    */
-
 
     // The main update loop will be executed once per frame before the scene is rendered
     private update() : void
     {
+        if(this.leftController && this.rightController)
+        {
+            // Update bimanual line position and rotation
+            this.bimanualLine!.position = this.leftController.grip!.position;
+            this.bimanualLine!.lookAt(this.rightController.grip!.position);
+            
+            // Update bimanual line scale
+            this.bimanualLine!.scaling.z = this.rightController.grip!.position.subtract(this.leftController.grip!.position).length();
+        }
+
         // Polling for controller input
         this.processControllerInput();  
 
@@ -304,29 +301,59 @@ class Game
 
     private onRightSqueeze(component?: WebXRControllerComponent)
     {
-        if(component?.pressed && this.leftController && this.selectedObject)
+        if(this.selectedObject && this.leftController)
         {
-            // Position manipulation
-            var midpoint = this.rightController!.grip!.position.add(this.leftController.grip!.position).scale(.5);
-            var previousMidpoint = this.previousRightControllerPosition.add(this.previousLeftControllerPosition).scale(.5);
-            var positionChange = midpoint.subtract(previousMidpoint);
-            this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange!.length(), Space.WORLD);
+            if(component?.changes.pressed)
+            {
+                // Button down
+                if(component?.pressed)
+                {
+                    this.bimanualLine!.visibility = 1;
+                    this.miniatureObject = new InstancedMesh('miniatureObject', <Mesh>this.selectedObject)
+                    
+                }
+                // Button release
+                else
+                {
+                    this.bimanualLine!.visibility = 0;
+                    this.miniatureObject?.dispose();
+                }
+            }
 
-            // Rotation manipulation
-            var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position).normalize();
-            var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition).normalize();
+            if(component?.pressed)
+            {
+                // Position manipulation
+                var midpoint = this.rightController!.grip!.position.add(this.leftController.grip!.position).scale(.5);
+                var previousMidpoint = this.previousRightControllerPosition.add(this.previousLeftControllerPosition).scale(.5);
+                var positionChange = midpoint.subtract(previousMidpoint);
+                this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange!.length(), Space.WORLD);
 
-            var angle = Math.acos(Vector3.Dot(previousBimanualVector, bimanualVector));
-            var axis = Vector3.Cross(previousBimanualVector, bimanualVector);
+                // Rotation manipulation
+                var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position).normalize();
+                var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition).normalize();
 
-            this.selectedObject.rotate(axis, angle, Space.WORLD);
+                // Some linear algebra to calculate the angle and axis of rotation
+                var angle = Math.acos(Vector3.Dot(previousBimanualVector, bimanualVector));
+                var axis = Vector3.Cross(previousBimanualVector, bimanualVector);
+                this.selectedObject.rotate(axis, angle, Space.WORLD);
+
+                // Update the position, orientation, and scale of the miniature object
+                this.miniatureObject!.position = midpoint;
+                this.miniatureObject!.rotationQuaternion = this.selectedObject.absoluteRotationQuaternion;
+                this.miniatureObject!.scaling = this.selectedObject.scaling.scale(.1);
+            }
+
         }
+
     }
 
     private onLeftSqueeze(component?: WebXRControllerComponent)
     {
-        if(component?.pressed && this.rightController && this.selectedObject)
+        // Only add scale manipulation if the right squeeze button is already being pressed
+        if(component?.pressed && this.selectedObject && 
+            this.rightController?.motionController?.getComponent("xr-standard-squeeze").pressed)
         {
+            // Scale manipulation
             var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position);
             var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition);
             var scaleFactor = bimanualVector.length() / previousBimanualVector.length();

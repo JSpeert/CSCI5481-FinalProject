@@ -8,6 +8,7 @@ Detailed explanation of this code can be found in the lecture video [LINK TO BE 
 2. Bimanual position manipulation
 3. Bimanual rotation manipulation
 4. Bimanual scale manipulation
+5. Using instanced meshes
 
 ## Participation Exercise
 
