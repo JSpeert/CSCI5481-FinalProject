@@ -40,11 +40,10 @@ class Game
 
     private laserPointer: LinesMesh | null;
     private bimanualLine: LinesMesh | null;
+    private miniatureObject: InstancedMesh | null;
 
     private previousLeftControllerPosition: Vector3;
     private previousRightControllerPosition: Vector3;
-
-    private miniatureObject: InstancedMesh | null;
     
     constructor()
     {
@@ -66,11 +65,11 @@ class Game
         
         this.laserPointer = null;
         this.bimanualLine = null;
+        this.miniatureObject = null;
 
         this.previousLeftControllerPosition = Vector3.Zero();
         this.previousRightControllerPosition = Vector3.Zero();
 
-        this.miniatureObject = null;
     }
 
     start() : void 
@@ -146,7 +145,7 @@ class Game
         bimanualPoints.push(new Vector3(0, 0, 0));
         bimanualPoints.push(new Vector3(0, 0, 1));
 
-        // Create a dashed line between the two controllers
+       // Create a dashed line between the two controllers
         this.bimanualLine = MeshBuilder.CreateDashedLines("bimanualLine", {points: bimanualPoints}, this.scene);
         this.bimanualLine.color = Color3.Gray();
         this.bimanualLine.alpha = .5;
@@ -159,7 +158,6 @@ class Game
 
         // Attach the laser pointer to the right controller when it is connected
         xrHelper.input.onControllerAddedObservable.add((inputSource) => {
-            
             if(inputSource.uniqueId.endsWith("right"))
             {
                 this.rightController = inputSource;
@@ -206,7 +204,6 @@ class Game
         this.scene.debugLayer.show(); 
     }
 
-
     // The main update loop will be executed once per frame before the scene is rendered
     private update() : void
     {
@@ -215,7 +212,7 @@ class Game
             // Update bimanual line position and rotation
             this.bimanualLine!.position = this.leftController.grip!.position;
             this.bimanualLine!.lookAt(this.rightController.grip!.position);
-            
+
             // Update bimanual line scale
             this.bimanualLine!.scaling.z = this.rightController.grip!.position.subtract(this.leftController.grip!.position).length();
         }
@@ -227,11 +224,11 @@ class Game
         if(this.rightController)
         {
             this.previousRightControllerPosition = this.rightController.grip!.position.clone();
-        } 
+        }
         if(this.leftController)
         {
             this.previousLeftControllerPosition = this.leftController.grip!.position.clone();
-        } 
+        }
     }
 
     // Process event handlers for controller input
@@ -309,8 +306,7 @@ class Game
                 if(component?.pressed)
                 {
                     this.bimanualLine!.visibility = 1;
-                    this.miniatureObject = new InstancedMesh('miniatureObject', <Mesh>this.selectedObject)
-                    
+                    this.miniatureObject = new InstancedMesh('miniatureObject', <Mesh>this.selectedObject);
                 }
                 // Button release
                 else
@@ -326,7 +322,7 @@ class Game
                 var midpoint = this.rightController!.grip!.position.add(this.leftController.grip!.position).scale(.5);
                 var previousMidpoint = this.previousRightControllerPosition.add(this.previousLeftControllerPosition).scale(.5);
                 var positionChange = midpoint.subtract(previousMidpoint);
-                this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange!.length(), Space.WORLD);
+                this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange.length(), Space.WORLD);
 
                 // Rotation manipulation
                 var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position).normalize();
@@ -334,7 +330,7 @@ class Game
 
                 // Some linear algebra to calculate the angle and axis of rotation
                 var angle = Math.acos(Vector3.Dot(previousBimanualVector, bimanualVector));
-                var axis = Vector3.Cross(previousBimanualVector, bimanualVector);
+                var axis = Vector3.Cross(previousBimanualVector, bimanualVector).normalize();
                 this.selectedObject.rotate(axis, angle, Space.WORLD);
 
                 // Update the position, orientation, and scale of the miniature object
@@ -342,15 +338,13 @@ class Game
                 this.miniatureObject!.rotationQuaternion = this.selectedObject.absoluteRotationQuaternion;
                 this.miniatureObject!.scaling = this.selectedObject.scaling.scale(.1);
             }
-
         }
-
     }
 
     private onLeftSqueeze(component?: WebXRControllerComponent)
     {
         // Only add scale manipulation if the right squeeze button is already being pressed
-        if(component?.pressed && this.selectedObject && 
+        if(component?.pressed && this.selectedObject &&
             this.rightController?.motionController?.getComponent("xr-standard-squeeze").pressed)
         {
             // Scale manipulation

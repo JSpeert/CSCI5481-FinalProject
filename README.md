@@ -1,6 +1,6 @@
 # Lecture 13: Bimanual Interaction
 
-Detailed explanation of this code can be found in the lecture video [LINK TO BE ADDED].
+Detailed explanation of this code can be found in the [lecture video](https://mediaspace.umn.edu/media/1_u2vvwdgz).
 
 ## Topics
 
