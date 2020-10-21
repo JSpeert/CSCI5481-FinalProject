@@ -1,4 +1,4 @@
-/* CSCI 5619 Lecture 12, Fall 2020
+/* CSCI 5619 Lecture 13, Fall 2020
  * Author: Evan Suma Rosenberg
  * License: Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
  */ 
