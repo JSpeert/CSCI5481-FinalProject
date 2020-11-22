@@ -1,8 +1,8 @@
-# CSCI 5481 - Final Project
+# CSCI 5619 - Final Project
 
 ## Submission Information
 
-Name: Sam Schaust, Jakob Speert
+Names: Sam Schaust, Jakob Speert
 
 UMN Emails: speer034@umn.edu
 
