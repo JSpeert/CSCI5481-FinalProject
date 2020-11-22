@@ -1,25 +1,14 @@
-# Lecture 13: Bimanual Interaction
+# CSCI 5481 - Final Project
 
-Detailed explanation of this code can be found in the [lecture video](https://mediaspace.umn.edu/media/1_u2vvwdgz).
+## Submission Information
 
-## Topics
+Name: Sam Schaust, Jakob Speert
 
-1. Review of code from Lecture 12
-2. Bimanual position manipulation
-3. Bimanual rotation manipulation
-4. Bimanual scale manipulation
-5. Using instanced meshes
+UMN Emails: speer034@umn.edu
 
-## Participation Exercise
+Build URL: http://www-users.cselabs.umn.edu/~speer034/CSCI5619/FinalProject/
 
-The participation exercise for this lecture is posted on Canvas.
+Third Party Assets:
 
-## License
 
-Material for [CSCI 5619 Fall 2020](https://canvas.umn.edu/courses/194179) by [Evan Suma Rosenberg](https://illusioneering.umn.edu/) is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-nc-sa/4.0/).
-
-The intent of choosing CC BY-NC-SA 4.0 is to allow individuals and instructors at non-profit entities to use this content.  This includes not-for-profit schools (K-12 and post-secondary). For-profit entities (or people creating courses for those sites) may not use this content without permission (this includes, but is not limited to, for-profit schools and universities and commercial education sites such as Coursera, Udacity, LinkedIn Learning, and other similar sites).   
-
-## Acknowledgments
-
-This lecture was based upon content from the [3D User Interfaces Fall 2020](https://github.blairmacintyre.me/3dui-class-f20) course by Blair MacIntyre.
+## Heading 2
