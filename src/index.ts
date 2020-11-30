@@ -11,7 +11,10 @@ import { WebXRControllerComponent } from "@babylonjs/core/XR/motionController/we
 import { WebXRInputSource } from "@babylonjs/core/XR/webXRInputSource";
 import { WebXRCamera } from "@babylonjs/core/XR/webXRCamera";
 import { PointLight } from "@babylonjs/core/Lights/pointLight";
+import { Sound } from "@babylonjs/core/Audio/sound";
 import { Logger } from "@babylonjs/core/Misc/logger";
+import { GUI3DManager } from "@babylonjs/gui/3D/gui3DManager";
+import { AssetsManager } from "@babylonjs/core/Misc/assetsManager";
 import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import {MeshBuilder} from  "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
@@ -21,9 +24,18 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { InstancedMesh } from "@babylonjs/core/Meshes/instancedMesh";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 
+// Physics
+import * as Cannon from "cannon"
+import { CannonJSPlugin } from "@babylonjs/core/Physics/Plugins/cannonJSPlugin";
+import { PhysicsImpostor } from "@babylonjs/core/Physics/physicsImpostor";
+import "@babylonjs/core/Physics/physicsEngineComponent";
+
 // Side effects
+import "@babylonjs/loaders/glTF/2.0/glTFLoader";
 import "@babylonjs/core/Helpers/sceneHelpers";
 import "@babylonjs/inspector";
+import { Material } from "@babylonjs/core/Materials/material";
+import { float, int } from "@babylonjs/core/types";
 
 class Game 
 { 
@@ -44,6 +56,20 @@ class Game
 
     private previousLeftControllerPosition: Vector3;
     private previousRightControllerPosition: Vector3;
+
+    private Building_Node: TransformNode;
+    private Vehicle_Node: TransformNode;
+    private leftLever_Node: TransformNode;
+    private rightLever_Node: TransformNode;
+    private GUI_Node: TransformNode;
+
+    // Values to be toggled
+    private GUI_Active: Boolean;
+    private Vehicle_Active: Boolean;
+    private Materials: Material[];
+    private MaterialIndex: int;
+    private cubeMass: float;
+    private wreckingBallMass: float;
     
     constructor()
     {
@@ -70,6 +96,18 @@ class Game
         this.previousLeftControllerPosition = Vector3.Zero();
         this.previousRightControllerPosition = Vector3.Zero();
 
+        this.Building_Node = new TransformNode("Building", this.scene);
+        this.Vehicle_Node = new TransformNode("Vehicle", this.scene);
+        this.leftLever_Node = new TransformNode("LeftLever", this.scene);
+        this.rightLever_Node = new TransformNode("RightLever", this.scene);    
+        this.GUI_Node = new TransformNode("GUI", this.scene);
+
+        this.GUI_Active = false;
+        this.Vehicle_Active = false;
+        this.Materials = [];
+        this.MaterialIndex = 0;
+        this.cubeMass = 1;
+        this.wreckingBallMass = 50;
     }
 
     start() : void 
@@ -111,12 +149,14 @@ class Game
             createGround: true,
             groundSize: 50,
             skyboxSize: 50,
-            skyboxColor: new Color3(0, 0, 0)
+            skyboxColor: new Color3(0, 90/255, 1)
         });
 
         // Make sure the environment and skybox is not pickable!
         environment!.ground!.isPickable = false;
+        environment!.ground!.scaling = new Vector3(2, 2, 2);
         environment!.skybox!.isPickable = false;
+        environment!.skybox!.scaling = new Vector3(2, 2, 2);
 
         // Creates the XR experience helper
         const xrHelper = await this.scene.createDefaultXRExperienceAsync({});
@@ -180,27 +220,23 @@ class Game
             }
         });
 
-        // Create a blue emissive material
-        var cubeMaterial = new StandardMaterial("blueMaterial", this.scene);
-        cubeMaterial.diffuseColor = new Color3(.284, .73, .831);
-        cubeMaterial.specularColor = Color3.Black();
-        cubeMaterial.emissiveColor = new Color3(.284, .73, .831);
+        // Create the Menuing System
+        //this.CreateGUI();
 
-        // Create a test cube at a convenient place
-        var testCube = MeshBuilder.CreateBox("testCube", {size: .25}, this.scene);
-        testCube.position = new Vector3(.5, 1.5, 2);
-        testCube.material = cubeMaterial;
-        testCube.edgesWidth = .3;
+        // Enable physics engine with gravity
+        this.scene.enablePhysics(new Vector3(0, -9.8, 0), new CannonJSPlugin(undefined, undefined, Cannon));
 
-        // Create a 3D selection and manipulation testbed
-        for (let i=0; i < 100; i++)
-        {
-            let cube = MeshBuilder.CreateBox("cube", {size: Math.random() * .3 + .1}, this.scene);
-            cube.position = new Vector3(Math.random() * 15 - 7.5, Math.random() * 5 + .2, Math.random() * 15 - 7.5);
-            cube.material = cubeMaterial;
-            cube.edgesWidth = .3;
-        }
-        
+        // Create Materials
+        this.createMaterials();
+
+        // Create a building for destruction
+        this.createBuilding();
+        this.Building_Node.position = new Vector3(-15, 5, 15);
+        this.Building_Node.scaling.y = 5;
+
+        // Load External Assets (Meshes and Sounds)
+        this.loadExternalAssets();
+
         this.scene.debugLayer.show(); 
     }
 
@@ -219,6 +255,12 @@ class Game
 
         // Polling for controller input
         this.processControllerInput();  
+
+        // Update the user position
+
+        // Check for collision with building
+
+        // Update objects in the WIM
 
         // Update the previous controller positions for next frame
         if(this.rightController)
@@ -355,6 +397,244 @@ class Game
         }
     }
 
+    // Create the different material options for the building
+    private createMaterials() {
+        var blueEmissiveMaterial = new StandardMaterial("blueMaterial", this.scene);
+        blueEmissiveMaterial.diffuseColor = new Color3(.284, .73, .831);
+        blueEmissiveMaterial.specularColor = Color3.Black();
+        blueEmissiveMaterial.emissiveColor = new Color3(.284, .73, .831);
+        this.Materials.push(blueEmissiveMaterial);
+
+        var brickRedMaterial = new StandardMaterial("brickRedMaterial", this.scene);
+        brickRedMaterial.diffuseColor = new Color3(128 / 255, 2 / 255, 2 / 255);
+        brickRedMaterial.specularColor = Color3.Black();
+        brickRedMaterial.emissiveColor = new Color3(92 / 255, 3 / 255, 3 / 255);
+        this.Materials.push(brickRedMaterial);
+    }
+
+    // Create a building for destruction
+    private createBuilding() {
+        for (let length = 0; length < 5; length++) {
+            for (let width = 0; width < 5; width++) {
+                for (let height = 0; height < 5; height++) {
+                    let cube = MeshBuilder.CreateBox("cube", { size: 1 }, this.scene);
+                    cube.scaling.y = 3
+                    cube.position = new Vector3(length, height + 0.5, width);
+                    cube.material = this.Materials[this.MaterialIndex];
+                    cube.edgesWidth = .3;
+                   
+                    cube.physicsImpostor = new PhysicsImpostor(cube, PhysicsImpostor.BoxImpostor, { mass: this.cubeMass }, this.scene);
+                    cube.physicsImpostor!.setLinearVelocity(Vector3.Zero());
+                    cube.physicsImpostor!.sleep();
+
+                    cube.parent = this.Building_Node;
+                }
+            }
+        }
+    }
+
+    // Load external meshes and sounds
+    private loadExternalAssets() {
+        var assetsManager = new AssetsManager(this.scene);
+
+        // Load the wrecking ball vehicle
+        var vehicleMesh_Task = assetsManager.addMeshTask("vehicleMesh", "", "assets/models/mining-dump-truck/", "mining-dump-truck.babylon");
+        vehicleMesh_Task.onSuccess = (task) => {
+            vehicleMesh_Task.loadedMeshes.forEach((mesh) => {
+                mesh.parent = this.Vehicle_Node;
+                mesh.isPickable = false;
+                (<StandardMaterial>mesh.material!).emissiveColor = Color3.White();
+            });
+        }
+
+        var lever_Task = assetsManager.addMeshTask("leverMesh", "", "assets/models/", "lever.babylon");
+        lever_Task.onSuccess = ((task) => {
+            lever_Task.loadedMeshes.forEach((mesh) => {
+                mesh.parent = this.leftLever_Node;
+                mesh.material = this.Materials[1];
+                if (mesh.id != "Handle") {
+                    mesh.isPickable = false;
+                }
+                var copyMesh = new InstancedMesh(mesh.name + "_copy", <Mesh>mesh);
+                copyMesh.parent = this.rightLever_Node;
+            });
+        });
+
+        // This loads all the assets and displays a loading screen
+        assetsManager.load();
+
+        // Build the vehicle
+        this.leftLever_Node.position = new Vector3(-0.64, 5.29, 7.12);
+        this.leftLever_Node.rotation = new Vector3(0, Math.PI / 2, 0);
+        this.leftLever_Node.scaling = new Vector3(0.01, 0.01, 0.01);
+
+        this.rightLever_Node.position = new Vector3(0.64, 5.29, 7.12);
+        this.rightLever_Node.rotation = new Vector3(0, Math.PI / 2, 0);
+        this.rightLever_Node.scaling = new Vector3(0.01, 0.01, 0.01);
+
+        this.Vehicle_Node.position = new Vector3(0, -1.2, 0);
+        this.Vehicle_Node.rotation = new Vector3(0, Math.PI, 0);
+        this.Vehicle_Node.scaling = new Vector3(0.05, 0.05, 0.05);
+
+        this.leftLever_Node.setParent(this.Vehicle_Node);
+        this.rightLever_Node.setParent(this.Vehicle_Node);
+
+        (<Mesh>this.Vehicle_Node).visibility = 0;
+    }
+
+    /*private CreateGUI() {
+        // The manager automates some of the GUI creation steps
+        var guiManager = new GUI3DManager(this.scene);
+
+        // Create a parent transform for the object configuration panel
+        var configTransform = new TransformNode("textTransform");
+
+        // Create a plane for the object configuration panel
+        var configPlane = MeshBuilder.CreatePlane("configPlane", { width: 1.5, height: .5 }, this.scene);
+        configPlane.position = new Vector3(0, 2, 1);
+        configPlane.parent = configTransform;
+
+        // Create a dynamic texture the object configuration panel
+        var configTexture = AdvancedDynamicTexture.CreateForMesh(configPlane, 1500, 500);
+        configTexture.background = (new Color4(.5, .5, .5, .25)).toHexString();
+
+        // Create a stack panel for the columns
+        var columnPanel = new StackPanel();
+        columnPanel.isVertical = false;
+        columnPanel.widthInPixels = 1400;
+        columnPanel.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        columnPanel.paddingLeftInPixels = 50;
+        columnPanel.paddingTopInPixels = 50;
+        configTexture.addControl(columnPanel);
+
+        // Create a stack panel for the radio buttons
+        var radioButtonPanel = new StackPanel();
+        radioButtonPanel.widthInPixels = 400;
+        radioButtonPanel.isVertical = true;
+        radioButtonPanel.verticalAlignment = StackPanel.VERTICAL_ALIGNMENT_TOP;
+        columnPanel.addControl(radioButtonPanel);
+
+        // Create radio buttons for changing the object type
+        var radioButton1 = new RadioButton("radioButton1");
+        radioButton1.width = "50px";
+        radioButton1.height = "50px";
+        radioButton1.color = "lightblue";
+        radioButton1.background = "black";
+
+        var radioButton2 = new RadioButton("radioButton1");
+        radioButton2.width = "50px";
+        radioButton2.height = "50px";
+        radioButton2.color = "lightblue";
+        radioButton2.background = "black";
+
+        // Text headers for the radio buttons
+        var radioButton1Header = Control.AddHeader(radioButton1, "box", "500px", { isHorizontal: true, controlFirst: true });
+        radioButton1Header.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        radioButton1Header.height = "75px";
+        radioButton1Header.fontSize = "48px";
+        radioButton1Header.color = "white";
+        radioButtonPanel.addControl(radioButton1Header);
+
+        var radioButton2Header = Control.AddHeader(radioButton2, "sphere", "500px", { isHorizontal: true, controlFirst: true });
+        radioButton2Header.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        radioButton2Header.height = "75px";
+        radioButton2Header.fontSize = "48px";
+        radioButton2Header.color = "white";
+        radioButtonPanel.addControl(radioButton2Header);
+
+        // Create a transform node to hold the configurable mesh
+        var configurableMeshTransform = new TransformNode("configurableMeshTransform", this.scene);
+        configurableMeshTransform.position = new Vector3(0, 1, 4);
+
+        // Event handlers for the radio buttons
+        radioButton1.onIsCheckedChangedObservable.add((state) => {
+            if (state) {
+                if (this.configurableMesh) {
+                    this.configurableMesh.dispose();
+                }
+                this.configurableMesh = MeshBuilder.CreateBox("configurableMesh", { size: 1 }, this.scene);
+                this.configurableMesh.parent = configurableMeshTransform;
+
+            }
+        });
+
+        radioButton2.onIsCheckedChangedObservable.add((state) => {
+            if (state) {
+                if (this.configurableMesh) {
+                    this.configurableMesh.dispose();
+                }
+                this.configurableMesh = MeshBuilder.CreateSphere("configurableMesh", { diameter: 1 }, this.scene);
+                this.configurableMesh.parent = configurableMeshTransform;
+            }
+        });
+
+        // Create a stack panel for the radio buttons
+        var sliderPanel = new StackPanel();
+        sliderPanel.widthInPixels = 500;
+        sliderPanel.isVertical = true;
+        sliderPanel.verticalAlignment = StackPanel.VERTICAL_ALIGNMENT_TOP;
+        columnPanel.addControl(sliderPanel);
+
+        // Create sliders for the x, y, and z rotation
+        var xSlider = new Slider();
+        xSlider.minimum = 0;
+        xSlider.maximum = 360;
+        xSlider.value = 0;
+        xSlider.color = "lightblue";
+        xSlider.height = "50px";
+        xSlider.width = "500px";
+
+        var ySlider = new Slider();
+        ySlider.minimum = 0;
+        ySlider.maximum = 360;
+        ySlider.value = 0;
+        ySlider.color = "lightblue";
+        ySlider.height = "50px";
+        ySlider.width = "500px";
+
+        var zSlider = new Slider();
+        zSlider.minimum = 0;
+        zSlider.maximum = 360;
+        zSlider.value = 0;
+        zSlider.color = "lightblue";
+        zSlider.height = "50px";
+        zSlider.width = "500px";
+
+        // Create text headers for the sliders
+        var xSliderHeader = Control.AddHeader(xSlider, "x", "50px", { isHorizontal: true, controlFirst: false });
+        xSliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        xSliderHeader.height = "75px";
+        xSliderHeader.fontSize = "48px";
+        xSliderHeader.color = "white";
+        sliderPanel.addControl(xSliderHeader);
+
+        var ySliderHeader = Control.AddHeader(ySlider, "y", "50px", { isHorizontal: true, controlFirst: false });
+        ySliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        ySliderHeader.height = "75px";
+        ySliderHeader.fontSize = "48px";
+        ySliderHeader.color = "white";
+        sliderPanel.addControl(ySliderHeader);
+
+        var zSliderHeader = Control.AddHeader(zSlider, "z", "50px", { isHorizontal: true, controlFirst: false });
+        zSliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
+        zSliderHeader.height = "75px";
+        zSliderHeader.fontSize = "48px";
+        zSliderHeader.color = "white";
+        sliderPanel.addControl(zSliderHeader);
+
+        // Event handlers for the sliders
+        xSlider.onValueChangedObservable.add((value) => {
+            configurableMeshTransform.rotation.x = value * Math.PI / 180;
+        });
+
+        ySlider.onValueChangedObservable.add((value) => {
+            configurableMeshTransform.rotation.y = value * Math.PI / 180;
+        });
+
+        zSlider.onValueChangedObservable.add((value) => {
+            configurableMeshTransform.rotation.z = value * Math.PI / 180;
+        });
+    } */
 }
 /******* End of the Game class ******/   
 
