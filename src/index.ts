@@ -23,6 +23,7 @@ import { Ray } from "@babylonjs/core/Culling/ray";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { InstancedMesh } from "@babylonjs/core/Meshes/instancedMesh";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { Quaternion } from "@babylonjs/core/Maths/math.vector";
 
 // Physics
 import * as Cannon from "cannon"
@@ -36,6 +37,11 @@ import "@babylonjs/core/Helpers/sceneHelpers";
 import "@babylonjs/inspector";
 import { Material } from "@babylonjs/core/Materials/material";
 import { float, int } from "@babylonjs/core/types";
+import { AdvancedDynamicTexture } from "@babylonjs/gui/2D/advancedDynamicTexture";
+import { TextBlock } from "@babylonjs/gui/2D/controls/textBlock";
+import { Button3D } from "@babylonjs/gui/3D/controls/button3D";
+import { WebXRExperienceHelper } from "@babylonjs/core/XR/webXRExperienceHelper";
+import { WebXRDefaultExperience } from "@babylonjs/core/XR/webXRDefaultExperience";
 
 class Game 
 { 
@@ -43,12 +49,23 @@ class Game
     private engine: Engine;
     private scene: Scene;
 
-    private xrCamera: WebXRCamera | null; 
+    private xrCamera: WebXRCamera | null;
+    private xrHelper: WebXRDefaultExperience | null;
     private leftController: WebXRInputSource | null;
     private rightController: WebXRInputSource | null;
 
+    private GUI_Node: TransformNode;
+    private WIM_Node: TransformNode;
+    private largeObjects: Mesh[];
+    private WIMObjects: Mesh[];
+    private miniSkybox: Mesh | null;
+    private WIMScaleFactor: float;
+    private selectedObjectIndex: int | null;
     private selectedObject: AbstractMesh | null;
     private selectionTransform: TransformNode | null;
+    private teleportPoint: Vector3 | null;
+    private teleportAngle: number;
+    private teleportMarker: TransformNode;
 
     private laserPointer: LinesMesh | null;
     private bimanualLine: LinesMesh | null;
@@ -58,14 +75,17 @@ class Game
     private previousRightControllerPosition: Vector3;
 
     private Building_Node: TransformNode;
+
     private Vehicle_Node: TransformNode;
+    private Vehicle_Meshes: Mesh[];
     private leftLever_Node: TransformNode;
     private rightLever_Node: TransformNode;
-    private GUI_Node: TransformNode;
 
     // Values to be toggled
     private GUI_Active: Boolean;
+    private GUISwitchEnabled: Boolean;
     private Vehicle_Active: Boolean;
+    private VehicleSwitchEnabled: Boolean;
     private Materials: Material[];
     private MaterialIndex: int;
     private cubeMass: float;
@@ -83,12 +103,15 @@ class Game
         this.scene = new Scene(this.engine);   
 
         this.xrCamera = null;
+        this.xrHelper = null;
         this.leftController = null;
         this.rightController = null;
     
         this.selectedObject = null;
         this.selectionTransform = null;
-        
+        this.teleportPoint = null;
+        this.teleportAngle = 0;
+        this.teleportMarker = new TransformNode("TeleportMarker", this.scene);
         this.laserPointer = null;
         this.bimanualLine = null;
         this.miniatureObject = null;
@@ -97,13 +120,24 @@ class Game
         this.previousRightControllerPosition = Vector3.Zero();
 
         this.Building_Node = new TransformNode("Building", this.scene);
+
         this.Vehicle_Node = new TransformNode("Vehicle", this.scene);
+        this.Vehicle_Meshes = [];
         this.leftLever_Node = new TransformNode("LeftLever", this.scene);
         this.rightLever_Node = new TransformNode("RightLever", this.scene);    
+
         this.GUI_Node = new TransformNode("GUI", this.scene);
+        this.WIM_Node = new TransformNode("WIM", this.scene);
+        this.largeObjects = [];
+        this.WIMObjects = [];
+        this.selectedObjectIndex = null;
+        this.miniSkybox = null;
+        this.WIMScaleFactor = 0.01;
 
         this.GUI_Active = false;
+        this.GUISwitchEnabled = true;
         this.Vehicle_Active = false;
+        this.VehicleSwitchEnabled = true;
         this.Materials = [];
         this.MaterialIndex = 0;
         this.cubeMass = 1;
@@ -158,15 +192,30 @@ class Game
         environment!.skybox!.isPickable = false;
         environment!.skybox!.scaling = new Vector3(2, 2, 2);
 
+        // Make a miniaturized version of the skybox for the WIM
+        this.miniSkybox = environment!.rootMesh.clone();
+        this.miniSkybox!.name = "miniSkyBox";
+        this.miniSkybox!.parent = this.WIM_Node;
+        this.miniSkybox!.scaling = new Vector3(0.5, 0.5, 0.5);
+        this.miniSkybox!.isVisible = false;
+        var skyboxChildren = this.miniSkybox!.getChildMeshes();
+        for (var mesh of skyboxChildren) {
+            if (mesh.name == ".BackgroundPlane") {
+                mesh.isPickable = true;
+            } else {
+                mesh.isPickable = false;
+            }
+        }
+
         // Creates the XR experience helper
-        const xrHelper = await this.scene.createDefaultXRExperienceAsync({});
+        this.xrHelper = await this.scene.createDefaultXRExperienceAsync({});
 
         // Assigns the web XR camera to a member variable
-        this.xrCamera = xrHelper.baseExperience.camera;
+        this.xrCamera = this.xrHelper.baseExperience.camera;
 
         // Remove default teleportation and pointer selection
-        xrHelper.teleportation.dispose();
-        xrHelper.pointerSelection.dispose();
+       this.xrHelper.teleportation.dispose();
+       this.xrHelper.pointerSelection.dispose();
 
         // Create points for the laser pointer
         var laserPoints = [];
@@ -196,22 +245,49 @@ class Game
         this.selectionTransform = new TransformNode("selectionTransform", this.scene);
         this.selectionTransform.parent = this.laserPointer;
 
+        // Create a depiction of the user in the WIM
+        var WIMCamera = MeshBuilder.CreateBox("UserMini", { size: 1 }, this.scene);
+        WIMCamera.position = this.xrCamera.position;
+        WIMCamera.isVisible = false;
+        var WIMCamMat = new StandardMaterial("WIMCamera_Material", this.scene);
+        WIMCamMat.diffuseColor = Color3.Black();
+        WIMCamMat.specularColor = Color3.Black();
+        WIMCamMat.emissiveColor = Color3.Black();
+        WIMCamera.material = WIMCamMat;
+
+        this.createMiniature(WIMCamera);
+
         // Attach the laser pointer to the right controller when it is connected
-        xrHelper.input.onControllerAddedObservable.add((inputSource) => {
+        this.xrHelper.input.onControllerAddedObservable.add((inputSource) => {
             if(inputSource.uniqueId.endsWith("right"))
             {
-                this.rightController = inputSource;
+                this.rightController = inputSource;               
                 this.laserPointer!.parent = this.rightController.pointer;
                 this.laserPointer!.visibility = 1;
             }
             else 
             {
                 this.leftController = inputSource;
-            }  
+
+                var WIM_Children = this.WIM_Node.getChildMeshes();
+                for (var mesh of WIM_Children) {
+                    mesh.isVisible = true;
+                }
+                this.miniSkybox!.isVisible = true;
+
+                // Attach the WIM to the less-dominant (left) controller
+                this.WIM_Node.parent = this.leftController.pointer;
+
+                inputSource.onMotionControllerInitObservable.add((controller) => {
+                    controller.onModelLoadedObservable.add((mesh) => {
+                        inputSource.motionController!.rootMesh!.dispose();
+                    });
+                });
+            }
         });
 
         // Don't forget to deparent the laser pointer or it will be destroyed!
-        xrHelper.input.onControllerRemovedObservable.add((inputSource) => {
+        this.xrHelper.input.onControllerRemovedObservable.add((inputSource) => {
 
             if(inputSource.uniqueId.endsWith("right")) 
             {
@@ -232,10 +308,15 @@ class Game
         // Create a building for destruction
         this.createBuilding();
         this.Building_Node.position = new Vector3(-15, 5, 15);
+        this.Building_Node.getChildMeshes().forEach((mesh) => {
+            this.createMiniature(<Mesh>mesh);
+        });
         this.Building_Node.scaling.y = 5;
 
         // Load External Assets (Meshes and Sounds)
         this.loadExternalAssets();
+
+        this.WIM_Node.scaling = new Vector3(this.WIMScaleFactor, this.WIMScaleFactor, this.WIMScaleFactor);
 
         this.scene.debugLayer.show(); 
     }
@@ -256,11 +337,19 @@ class Game
         // Polling for controller input
         this.processControllerInput();  
 
+        // Check the position of the controllers
+        this.checkControllerPositions();
+
         // Update the user position
 
         // Check for collision with building
 
         // Update objects in the WIM
+        if (this.selectedObject) {
+            this.updateMiniature(this.selectedObjectIndex!);
+        }
+
+        this.updateMiniUser();
 
         // Update the previous controller positions for next frame
         if(this.rightController)
@@ -271,6 +360,11 @@ class Game
         {
             this.previousLeftControllerPosition = this.leftController.grip!.position.clone();
         }
+    }
+
+    // Need to update the position/orientation of the Mini User
+    private updateMiniUser() {
+        this.WIMObjects[0].rotationQuaternion = this.xrCamera!.rotationQuaternion;
     }
 
     // Process event handlers for controller input
@@ -298,17 +392,21 @@ class Game
                 {
                     this.selectedObject.disableEdgesRendering();
                     this.selectedObject = null;
+                    this.selectedObjectIndex = null;
                 }
 
                 // If an object was hit, select it
-                if(pickInfo?.hit)
+                if (pickInfo ?.hit && this.largeObjects.includes(<Mesh>pickInfo!.pickedMesh))
                 {
                     this.selectedObject = pickInfo!.pickedMesh;
                     this.selectedObject!.enableEdgesRendering();
+                    this.selectedObjectIndex = this.largeObjects.indexOf(<Mesh>this.selectedObject) + 1;
 
-                    // Parent the object to the transform on the laser pointer
-                    this.selectionTransform!.position = new Vector3(0, 0, pickInfo.distance);
-                    this.selectedObject!.setParent(this.selectionTransform!);
+                    if (this.selectedObject!.name != "Handle" && this.selectedObject!.name != "Handle_copy") {
+                        // Parent the object to the transform on the laser pointer
+                        this.selectionTransform!.position = new Vector3(0, 0, pickInfo.distance);
+                        this.selectedObject!.setParent(this.selectionTransform!);
+                    }
                 }
             }
             else
@@ -328,13 +426,76 @@ class Game
     private onRightThumbstick(component?: WebXRControllerComponent)
     {
         // If we have an object that is currently attached to the laser pointer
-        if(component?.changes.axes && this.selectedObject && this.selectedObject.parent)
-        {
+        if (component ?.changes.axes && this.selectedObject && this.selectedObject.parent) {
             // Use delta time to calculate the proper speed
             var moveDistance = -component.axes.y * (this.engine.getDeltaTime() / 1000) * 3;
 
             // Translate the object along the depth ray in world space
             this.selectedObject.translate(this.laserPointer!.forward, moveDistance, Space.WORLD);
+        } else if (component ?.changes.axes) {
+            if (component ?.axes.y < -.75) { // If the thumbstick is moved forward               
+                // Create a new ray cast
+                var ray = new Ray(this.rightController!.pointer.position, this.rightController!.pointer.forward, 20);
+                var pickInfo = this.scene.pickWithRay(ray);
+
+                // If the ray cast intersected a ground mesh
+                if (pickInfo ?.hit && this.miniSkybox!.getChildMeshes().includes(pickInfo.pickedMesh!)) {
+                    pickInfo!.pickedMesh!.setParent(this.WIM_Node);
+                    this.teleportPoint = pickInfo.pickedPoint;
+
+                    this.teleportMarker.rotation = Vector3.Zero();
+                    this.laserPointer!.scaling.z = pickInfo.distance;
+                    this.laserPointer!.visibility = 1;
+
+                    for (var mesh of this.teleportMarker.getChildMeshes()) {
+                        mesh.visibility = 1;
+                    }
+
+                    this.teleportMarker.position.x = this.teleportPoint!.x;
+                    this.teleportMarker.position.y = 1;
+                    this.teleportMarker.position.z = this.teleportPoint!.z;
+
+                    // Use the distance between the two controllers to determine the angle
+                    this.teleportAngle = (Vector3.Distance(this.leftController!.pointer!.position, this.rightController!.pointer!.position) / 1) * 360 * (Math.PI / 90);
+
+                    this.teleportMarker.setParent(this.rightController!.pointer!);
+                    this.teleportMarker.rotation.y = this.teleportAngle - (Math.PI / 2);
+                    this.teleportMarker.setParent(null);
+                    this.teleportMarker.rotation.x = 0;
+                    this.teleportMarker.rotation.z = 0;
+
+                    pickInfo!.pickedMesh!.setParent(null);
+                } else {
+                    this.teleportPoint = null;
+                    this.laserPointer!.visibility = 0;
+
+                    for (var mesh of this.teleportMarker.getChildMeshes()) {
+                        mesh.visibility = 0;
+                    }
+                }
+            }
+            // If thumbstick returns to the rest position
+            else if (component ?.axes.y == 0) {
+                this.laserPointer!.visibility = 0;
+                for (var mesh of this.teleportMarker.getChildMeshes()) {
+                    mesh.visibility = 0;
+                }
+
+                // If we have a valid targer point, then teleport the user
+                if (this.teleportPoint) {
+                    this.xrCamera!.position.x = this.teleportPoint.x / this.WIMScaleFactor;
+                    this.xrCamera!.position.y = (this.teleportPoint.y + this.xrCamera!.realWorldHeight) / this.WIMScaleFactor;
+                    this.xrCamera!.position.z = this.teleportPoint.z / this.WIMScaleFactor;
+
+                    this.teleportMarker.setParent(this.xrCamera);
+                    var cameraRotation = Quaternion.FromEulerAngles(0, this.teleportMarker.rotation.y + (Math.PI / 2), 0);
+                    this.xrCamera!.rotationQuaternion.multiplyInPlace(cameraRotation);
+                    this.xrCamera!.updateUpVectorFromRotation = false;
+                    this.teleportMarker.setParent(null);
+                    this.teleportPoint = null;
+
+                }
+            }
         }
     }
 
@@ -342,43 +503,41 @@ class Game
     {
         if(this.selectedObject && this.leftController)
         {
-            if(component?.changes.pressed)
-            {
-                // Button down
-                if(component?.pressed)
-                {
-                    this.bimanualLine!.visibility = 1;
-                    this.miniatureObject = new InstancedMesh('miniatureObject', <Mesh>this.selectedObject);
+            if (this.selectedObject.name != "Handle" && this.selectedObject.name != "Handle_copy") {
+                if (component ?.changes.pressed) {
+                    // Button down
+                    if (component ?.pressed) {
+                        this.bimanualLine!.visibility = 1;
+                        this.miniatureObject = new InstancedMesh('miniatureObject', <Mesh>this.selectedObject);
+                    }
+                    // Button release
+                    else {
+                        this.bimanualLine!.visibility = 0;
+                        this.miniatureObject ?.dispose();
+                    }
                 }
-                // Button release
-                else
-                {
-                    this.bimanualLine!.visibility = 0;
-                    this.miniatureObject?.dispose();
+
+                if (component ?.pressed) {
+                    // Position manipulation
+                    var midpoint = this.rightController!.grip!.position.add(this.leftController.grip!.position).scale(.5);
+                    var previousMidpoint = this.previousRightControllerPosition.add(this.previousLeftControllerPosition).scale(.5);
+                    var positionChange = midpoint.subtract(previousMidpoint);
+                    this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange.length(), Space.WORLD);
+
+                    // Rotation manipulation
+                    var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position).normalize();
+                    var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition).normalize();
+
+                    // Some linear algebra to calculate the angle and axis of rotation
+                    var angle = Math.acos(Vector3.Dot(previousBimanualVector, bimanualVector));
+                    var axis = Vector3.Cross(previousBimanualVector, bimanualVector).normalize();
+                    this.selectedObject.rotate(axis, angle, Space.WORLD);
+
+                    // Update the position, orientation, and scale of the miniature object
+                    this.miniatureObject!.position = midpoint;
+                    this.miniatureObject!.rotationQuaternion = this.selectedObject.absoluteRotationQuaternion;
+                    this.miniatureObject!.scaling = this.selectedObject.scaling.scale(.1);
                 }
-            }
-
-            if(component?.pressed)
-            {
-                // Position manipulation
-                var midpoint = this.rightController!.grip!.position.add(this.leftController.grip!.position).scale(.5);
-                var previousMidpoint = this.previousRightControllerPosition.add(this.previousLeftControllerPosition).scale(.5);
-                var positionChange = midpoint.subtract(previousMidpoint);
-                this.selectedObject.translate(positionChange!.normalizeToNew(), positionChange.length(), Space.WORLD);
-
-                // Rotation manipulation
-                var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position).normalize();
-                var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition).normalize();
-
-                // Some linear algebra to calculate the angle and axis of rotation
-                var angle = Math.acos(Vector3.Dot(previousBimanualVector, bimanualVector));
-                var axis = Vector3.Cross(previousBimanualVector, bimanualVector).normalize();
-                this.selectedObject.rotate(axis, angle, Space.WORLD);
-
-                // Update the position, orientation, and scale of the miniature object
-                this.miniatureObject!.position = midpoint;
-                this.miniatureObject!.rotationQuaternion = this.selectedObject.absoluteRotationQuaternion;
-                this.miniatureObject!.scaling = this.selectedObject.scaling.scale(.1);
             }
         }
     }
@@ -389,11 +548,13 @@ class Game
         if(component?.pressed && this.selectedObject &&
             this.rightController?.motionController?.getComponent("xr-standard-squeeze").pressed)
         {
-            // Scale manipulation
-            var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position);
-            var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition);
-            var scaleFactor = bimanualVector.length() / previousBimanualVector.length();
-            this.selectedObject.scaling = this.selectedObject.scaling.scale(scaleFactor);
+            if (this.selectedObject.name != "Handle" && this.selectedObject.name != "Handle_copy") {
+                // Scale manipulation
+                var bimanualVector = this.rightController!.grip!.position.subtract(this.leftController!.grip!.position);
+                var previousBimanualVector = this.previousRightControllerPosition.subtract(this.previousLeftControllerPosition);
+                var scaleFactor = bimanualVector.length() / previousBimanualVector.length();
+                this.selectedObject.scaling = this.selectedObject.scaling.scale(scaleFactor);
+            }
         }
     }
 
@@ -428,6 +589,7 @@ class Game
                     cube.physicsImpostor!.sleep();
 
                     cube.parent = this.Building_Node;
+                    this.largeObjects.push(cube);
                 }
             }
         }
@@ -444,6 +606,9 @@ class Game
                 mesh.parent = this.Vehicle_Node;
                 mesh.isPickable = false;
                 (<StandardMaterial>mesh.material!).emissiveColor = Color3.White();
+                this.Vehicle_Meshes.push(<Mesh>mesh);
+                this.largeObjects.push(<Mesh>mesh);
+                mesh.visibility = 0;
             });
         }
 
@@ -452,25 +617,42 @@ class Game
             lever_Task.loadedMeshes.forEach((mesh) => {
                 mesh.parent = this.leftLever_Node;
                 mesh.material = this.Materials[1];
-                if (mesh.id != "Handle") {
+                if (mesh.name != "Handle") {
                     mesh.isPickable = false;
                 }
                 var copyMesh = new InstancedMesh(mesh.name + "_copy", <Mesh>mesh);
                 copyMesh.parent = this.rightLever_Node;
+                if (copyMesh.name != "Handle_copy") {
+                    copyMesh.isPickable = false;
+                }
+                this.Vehicle_Meshes.push(<Mesh>mesh);
+                this.largeObjects.push(<Mesh>mesh);                
+                mesh.visibility = 0;
             });
         });
+
+        // Load the teleportation marker
+        var teleportMarkerTask = assetsManager.addMeshTask("teleportaion marker task", "", "assets/models/", "arrow.babylon");
+        teleportMarkerTask.onSuccess = (task) => {
+            teleportMarkerTask.loadedMeshes.forEach((mesh) => {
+                mesh.parent = this.teleportMarker;
+                mesh.visibility = 0;
+            });
+
+            this.teleportMarker.parent = this.WIM_Node;
+        };
 
         // This loads all the assets and displays a loading screen
         assetsManager.load();
 
         // Build the vehicle
-        this.leftLever_Node.position = new Vector3(-0.64, 5.29, 7.12);
+        this.leftLever_Node.position = new Vector3(-0.4, 5.29, 7.12);
         this.leftLever_Node.rotation = new Vector3(0, Math.PI / 2, 0);
-        this.leftLever_Node.scaling = new Vector3(0.01, 0.01, 0.01);
+        this.leftLever_Node.scaling = new Vector3(0.01, 0.02, 0.01);
 
-        this.rightLever_Node.position = new Vector3(0.64, 5.29, 7.12);
+        this.rightLever_Node.position = new Vector3(0.4, 5.29, 7.12);
         this.rightLever_Node.rotation = new Vector3(0, Math.PI / 2, 0);
-        this.rightLever_Node.scaling = new Vector3(0.01, 0.01, 0.01);
+        this.rightLever_Node.scaling = new Vector3(0.01, 0.02, 0.01);
 
         this.Vehicle_Node.position = new Vector3(0, -1.2, 0);
         this.Vehicle_Node.rotation = new Vector3(0, Math.PI, 0);
@@ -479,162 +661,172 @@ class Game
         this.leftLever_Node.setParent(this.Vehicle_Node);
         this.rightLever_Node.setParent(this.Vehicle_Node);
 
-        (<Mesh>this.Vehicle_Node).visibility = 0;
+        this.Vehicle_Meshes.forEach((mesh) => {
+            this.createMiniature(<Mesh>mesh);
+        });
     }
 
-    /*private CreateGUI() {
+    // The GUI will be placed on the left hand
+    private CreateGUI() {
+
+        /* Manually create a plane for the menuing system
+        var staticTextPlane = MeshBuilder.CreatePlane("textPlane", {}, this.scene);
+        staticTextPlane.position.y = .1;
+
+        // Create a dynamic texture for adding the GUI controls
+        var staticTextTexture = AdvancedDynamicTexture.CreateForMesh(staticTextPlane, 512, 512);
+
+        // Create a static text block
+        var staticText = new TextBlock();
+        staticText.text = "Text Here";
+        staticText.color = "white";
+        staticText.fontSize = 12;
+        staticTextTexture.addControl(staticText);
+
+        // Attach the menu to the left controller when it is connected
+        this.xrHelper!.input.onControllerAddedObservable.add((inputSource) => {
+            if (inputSource.uniqueId.endsWith("left")) {
+                staticTextPlane.parent = this.rightController!.pointer!;
+            }
+        });
+
+        // Don't forget to deparent the laser pointer or it will be destroyed!
+        this.xrHelper!.input.onControllerRemovedObservable.add((inputSource) => {
+            if (inputSource.uniqueId.endsWith("left")) {
+                staticTextPlane.parent = null;
+            }
+        }); */
+
         // The manager automates some of the GUI creation steps
         var guiManager = new GUI3DManager(this.scene);
 
-        // Create a parent transform for the object configuration panel
-        var configTransform = new TransformNode("textTransform");
+        // Create buttons
+        var materialsButton = new Button3D("materialsButton");
+        var physicsButton = new Button3D("physicsButton");
+        var WIMButton = new Button3D("WIMButton");
+   
+        guiManager.addControl(materialsButton);
+        //guiManager.addControl(physicsButton);
+        //guiManager.addControl(WIMButton);
 
-        // Create a plane for the object configuration panel
-        var configPlane = MeshBuilder.CreatePlane("configPlane", { width: 1.5, height: .5 }, this.scene);
-        configPlane.position = new Vector3(0, 2, 1);
-        configPlane.parent = configTransform;
+        // Materials Button
+        materialsButton.scaling.y = 0.5;
+        materialsButton.mesh!.parent = this.GUI_Node;
 
-        // Create a dynamic texture the object configuration panel
-        var configTexture = AdvancedDynamicTexture.CreateForMesh(configPlane, 1500, 500);
-        configTexture.background = (new Color4(.5, .5, .5, .25)).toHexString();
+        var materialsButtonText = new TextBlock();
+        materialsButtonText.text = "Building Material";
+        materialsButtonText.color = "white";
+        materialsButtonText.fontSize = 24;
+        materialsButtonText.scaleY = 2;
+        materialsButton.content = materialsButtonText;
 
-        // Create a stack panel for the columns
-        var columnPanel = new StackPanel();
-        columnPanel.isVertical = false;
-        columnPanel.widthInPixels = 1400;
-        columnPanel.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        columnPanel.paddingLeftInPixels = 50;
-        columnPanel.paddingTopInPixels = 50;
-        configTexture.addControl(columnPanel);
+        /* Physics Button
+        physicsButton.scaling.y = 0.5;
+        physicsButton.mesh!.parent = this.GUI_Node;
 
-        // Create a stack panel for the radio buttons
-        var radioButtonPanel = new StackPanel();
-        radioButtonPanel.widthInPixels = 400;
-        radioButtonPanel.isVertical = true;
-        radioButtonPanel.verticalAlignment = StackPanel.VERTICAL_ALIGNMENT_TOP;
-        columnPanel.addControl(radioButtonPanel);
+        // WIM Button
+        WIMButton.scaling.y = 0.5;
+        WIMButton.mesh!.parent = this.GUI_Node;
+        */
 
-        // Create radio buttons for changing the object type
-        var radioButton1 = new RadioButton("radioButton1");
-        radioButton1.width = "50px";
-        radioButton1.height = "50px";
-        radioButton1.color = "lightblue";
-        radioButton1.background = "black";
-
-        var radioButton2 = new RadioButton("radioButton1");
-        radioButton2.width = "50px";
-        radioButton2.height = "50px";
-        radioButton2.color = "lightblue";
-        radioButton2.background = "black";
-
-        // Text headers for the radio buttons
-        var radioButton1Header = Control.AddHeader(radioButton1, "box", "500px", { isHorizontal: true, controlFirst: true });
-        radioButton1Header.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        radioButton1Header.height = "75px";
-        radioButton1Header.fontSize = "48px";
-        radioButton1Header.color = "white";
-        radioButtonPanel.addControl(radioButton1Header);
-
-        var radioButton2Header = Control.AddHeader(radioButton2, "sphere", "500px", { isHorizontal: true, controlFirst: true });
-        radioButton2Header.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        radioButton2Header.height = "75px";
-        radioButton2Header.fontSize = "48px";
-        radioButton2Header.color = "white";
-        radioButtonPanel.addControl(radioButton2Header);
-
-        // Create a transform node to hold the configurable mesh
-        var configurableMeshTransform = new TransformNode("configurableMeshTransform", this.scene);
-        configurableMeshTransform.position = new Vector3(0, 1, 4);
-
-        // Event handlers for the radio buttons
-        radioButton1.onIsCheckedChangedObservable.add((state) => {
-            if (state) {
-                if (this.configurableMesh) {
-                    this.configurableMesh.dispose();
-                }
-                this.configurableMesh = MeshBuilder.CreateBox("configurableMesh", { size: 1 }, this.scene);
-                this.configurableMesh.parent = configurableMeshTransform;
-
+        // Attach the menu to the left controller when it is connected
+        this.xrHelper!.input.onControllerAddedObservable.add((inputSource) => {
+            if (inputSource.uniqueId.endsWith("left")) {
+                this.GUI_Node.parent = this.leftController!.pointer!;
             }
         });
 
-        radioButton2.onIsCheckedChangedObservable.add((state) => {
-            if (state) {
-                if (this.configurableMesh) {
-                    this.configurableMesh.dispose();
-                }
-                this.configurableMesh = MeshBuilder.CreateSphere("configurableMesh", { diameter: 1 }, this.scene);
-                this.configurableMesh.parent = configurableMeshTransform;
+        // Don't forget to deparent the menu pointer or it will be destroyed!
+        this.xrHelper!.input.onControllerRemovedObservable.add((inputSource) => {
+            if (inputSource.uniqueId.endsWith("left")) {
+                this.GUI_Node.parent = null;
             }
         });
+    } 
 
-        // Create a stack panel for the radio buttons
-        var sliderPanel = new StackPanel();
-        sliderPanel.widthInPixels = 500;
-        sliderPanel.isVertical = true;
-        sliderPanel.verticalAlignment = StackPanel.VERTICAL_ALIGNMENT_TOP;
-        columnPanel.addControl(sliderPanel);
+    // Check the controller positions to toggle the menu/vehicle modes
+    private checkControllerPositions() {
+        // Ensure that the controllers are connected
+        if (this.leftController && this.rightController) {
 
-        // Create sliders for the x, y, and z rotation
-        var xSlider = new Slider();
-        xSlider.minimum = 0;
-        xSlider.maximum = 360;
-        xSlider.value = 0;
-        xSlider.color = "lightblue";
-        xSlider.height = "50px";
-        xSlider.width = "500px";
+            // Vehicle Toggle
+            // Check if the controller positions are above the headset
+            if (this.leftController!.grip!.position.y >= this.xrCamera!.position.y &&
+                this.rightController!.grip!.position.y >= this.xrCamera!.position.y) {
+                // Ensure that this is the first time that the controllers are above the headset
+                if (this.VehicleSwitchEnabled) {
+                    if (this.Vehicle_Active) {
+                        this.ExitVehicleMode();
+                    } else {
+                        this.EnterVehicleMode();
+                    }
 
-        var ySlider = new Slider();
-        ySlider.minimum = 0;
-        ySlider.maximum = 360;
-        ySlider.value = 0;
-        ySlider.color = "lightblue";
-        ySlider.height = "50px";
-        ySlider.width = "500px";
+                    this.VehicleSwitchEnabled = false;
+                }
+            } else {
+                this.VehicleSwitchEnabled = true;
+            }
 
-        var zSlider = new Slider();
-        zSlider.minimum = 0;
-        zSlider.maximum = 360;
-        zSlider.value = 0;
-        zSlider.color = "lightblue";
-        zSlider.height = "50px";
-        zSlider.width = "500px";
+            // Menu Toggle
 
-        // Create text headers for the sliders
-        var xSliderHeader = Control.AddHeader(xSlider, "x", "50px", { isHorizontal: true, controlFirst: false });
-        xSliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        xSliderHeader.height = "75px";
-        xSliderHeader.fontSize = "48px";
-        xSliderHeader.color = "white";
-        sliderPanel.addControl(xSliderHeader);
+        }
+    }
 
-        var ySliderHeader = Control.AddHeader(ySlider, "y", "50px", { isHorizontal: true, controlFirst: false });
-        ySliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        ySliderHeader.height = "75px";
-        ySliderHeader.fontSize = "48px";
-        ySliderHeader.color = "white";
-        sliderPanel.addControl(ySliderHeader);
+    // Enable the menu
+    private ActivateMenu() {
+        // Make the GUI visible
 
-        var zSliderHeader = Control.AddHeader(zSlider, "z", "50px", { isHorizontal: true, controlFirst: false });
-        zSliderHeader.horizontalAlignment = StackPanel.HORIZONTAL_ALIGNMENT_LEFT;
-        zSliderHeader.height = "75px";
-        zSliderHeader.fontSize = "48px";
-        zSliderHeader.color = "white";
-        sliderPanel.addControl(zSliderHeader);
+        this.GUI_Active = true;
+    }
 
-        // Event handlers for the sliders
-        xSlider.onValueChangedObservable.add((value) => {
-            configurableMeshTransform.rotation.x = value * Math.PI / 180;
+    // Disable the menu
+    private DisableMenu() {
+        // Make the GUI invisible
+
+        this.GUI_Active = false;
+    }
+
+    // Enter the vehicle
+    private EnterVehicleMode() {
+        this.Vehicle_Meshes.forEach((mesh) => {
+            mesh.visibility = 1;
         });
 
-        ySlider.onValueChangedObservable.add((value) => {
-            configurableMeshTransform.rotation.y = value * Math.PI / 180;
+        this.xrCamera!.position = new Vector3(0, this.xrCamera!.realWorldHeight + 5.5, 6.3);
+
+        this.Vehicle_Active = true;
+    }
+
+    // Exit the vehicle
+    private ExitVehicleMode() {
+        this.Vehicle_Meshes.forEach((mesh) => {
+            mesh.visibility = 0;
         });
 
-        zSlider.onValueChangedObservable.add((value) => {
-            configurableMeshTransform.rotation.z = value * Math.PI / 180;
-        });
-    } */
+        this.xrCamera!.position = new Vector3(0, this.xrCamera!.realWorldHeight, 0);
+
+        this.Vehicle_Active = false;
+    }
+
+    // Creates a miniture instance of the object specified for the WIM
+    // Any modifications to the original Mesh also changes the InstancedMesh
+    private createMiniature(mesh: Mesh) {
+        var meshCopy = new InstancedMesh(mesh.name + "_mini", mesh);
+        meshCopy.parent = this.WIM_Node;
+        meshCopy.position = mesh.getAbsolutePosition().clone();
+        if (mesh.name == "cube") {
+            meshCopy.scaling.y = 5;
+        }
+        meshCopy.edgesWidth = .1;
+        meshCopy.isVisible = false;
+
+        this.WIMObjects.push(<Mesh><AbstractMesh>meshCopy);
+    }
+
+    private updateMiniature(i: int) {
+        this.WIMObjects[i].position = this.selectedObject!.getAbsolutePosition().clone();
+        this.WIMObjects[i].rotationQuaternion = this.selectedObject!.absoluteRotationQuaternion;
+    }
 }
 /******* End of the Game class ******/   
 
