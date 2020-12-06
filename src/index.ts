@@ -317,6 +317,7 @@ class Game
         this.loadExternalAssets();
 
         this.WIM_Node.scaling = new Vector3(this.WIMScaleFactor, this.WIMScaleFactor, this.WIMScaleFactor);
+        this.DeactivateWIM();
 
         this.scene.debugLayer.show(); 
     }
@@ -768,13 +769,37 @@ class Game
             }
 
             // Menu Toggle
+            // Check if the controller positions are crossed
+            this.leftController!.grip!.setParent(this.xrCamera!);
+            this.rightController!.grip!.setParent(this.xrCamera!);
+            if (this.leftController!.grip!.position.x >= this.rightController!.grip!.position.x) {
+                // Ensure that this is the first time that the controllers are crossed
+                if (this.GUISwitchEnabled) {
+                    if (this.GUI_Active) {
+                        this.DisableMenu();
+                    } else {
+                        this.ActivateMenu();
+                    }
 
+                    this.GUISwitchEnabled = false;
+                }
+            } else {
+                this.GUISwitchEnabled = true;
+            }
+            this.leftController!.grip!.setParent(null);
+            this.rightController!.grip!.setParent(null);
         }
     }
 
     // Enable the menu
     private ActivateMenu() {
         // Make the GUI visible
+        this.ActivateWIM();
+
+        // Make the left controller invisible
+        this.leftController!.pointer!.getChildMeshes().forEach((mesh) => {
+            mesh.visibility = 0;
+        });
 
         this.GUI_Active = true;
     }
@@ -782,6 +807,12 @@ class Game
     // Disable the menu
     private DisableMenu() {
         // Make the GUI invisible
+        this.DeactivateWIM();
+
+        // Make the left controller visible again
+        this.leftController!.pointer!.getChildMeshes().forEach((mesh) => {
+            mesh.visibility = 1;
+        });
 
         this.GUI_Active = false;
     }
@@ -808,19 +839,39 @@ class Game
         this.Vehicle_Active = false;
     }
 
+    // Activate the WIM
+    private ActivateWIM() {
+        this.miniSkybox!.visibility = 1;
+
+        this.largeObjects.forEach((mesh) => {
+            var meshIndex = this.largeObjects.indexOf(mesh);
+            this.WIMObjects[meshIndex + 1].visibility = mesh.visibility;
+        });
+    }
+
+    // Deactivate the WIM
+    private DeactivateWIM() {
+        this.miniSkybox!.visibility = 0;
+
+        this.WIMObjects.forEach((mesh) => {
+            mesh.visibility = 0;
+        });
+    }
+
     // Creates a miniture instance of the object specified for the WIM
     // Any modifications to the original Mesh also changes the InstancedMesh
     private createMiniature(mesh: Mesh) {
-        var meshCopy = new InstancedMesh(mesh.name + "_mini", mesh);
+        var meshCopy = mesh.clone();
+        meshCopy.name = mesh.name + "_mini";
         meshCopy.parent = this.WIM_Node;
         meshCopy.position = mesh.getAbsolutePosition().clone();
         if (mesh.name == "cube") {
             meshCopy.scaling.y = 5;
         }
         meshCopy.edgesWidth = .1;
-        meshCopy.isVisible = false;
+        meshCopy.visibility = mesh.visibility;
 
-        this.WIMObjects.push(<Mesh><AbstractMesh>meshCopy);
+        this.WIMObjects.push(meshCopy);
     }
 
     private updateMiniature(i: int) {
