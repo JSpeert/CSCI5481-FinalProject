@@ -269,35 +269,25 @@ class Game
             {
                 this.leftController = inputSource;
 
-                var WIM_Children = this.WIM_Node.getChildMeshes();
-                for (var mesh of WIM_Children) {
-                    mesh.isVisible = true;
-                }
-                this.miniSkybox!.isVisible = true;
-
                 // Attach the WIM to the less-dominant (left) controller
-                this.WIM_Node.parent = this.leftController.pointer;
-
-                inputSource.onMotionControllerInitObservable.add((controller) => {
-                    controller.onModelLoadedObservable.add((mesh) => {
-                        inputSource.motionController!.rootMesh!.dispose();
-                    });
-                });
+                this.WIM_Node.setParent(this.leftController.pointer);
             }
         });
 
         // Don't forget to deparent the laser pointer or it will be destroyed!
         this.xrHelper.input.onControllerRemovedObservable.add((inputSource) => {
 
-            if(inputSource.uniqueId.endsWith("right")) 
-            {
+            if (inputSource.uniqueId.endsWith("right")) {
                 this.laserPointer!.parent = null;
                 this.laserPointer!.visibility = 0;
+            } else {
+                this.WIM_Node.setParent(null);
             }
+
         });
 
         // Create the Menuing System
-        //this.CreateGUI();
+        this.CreateGUI();
 
         // Enable physics engine with gravity
         this.scene.enablePhysics(new Vector3(0, -9.8, 0), new CannonJSPlugin(undefined, undefined, Cannon));
@@ -307,10 +297,7 @@ class Game
 
         // Create a building for destruction
         this.createBuilding();
-        this.Building_Node.position = new Vector3(-15, 5, 15);
-        this.Building_Node.getChildMeshes().forEach((mesh) => {
-            this.createMiniature(<Mesh>mesh);
-        });
+        this.Building_Node.position = new Vector3(-15, 5, 15);        
         this.Building_Node.scaling.y = 5;
 
         // Load External Assets (Meshes and Sounds)
@@ -584,7 +571,10 @@ class Game
                     cube.position = new Vector3(length, height + 0.5, width);
                     cube.material = this.Materials[this.MaterialIndex];
                     cube.edgesWidth = .3;
-                   
+
+                    // The copy does not need a physics imposter
+                    this.createMiniature(cube);
+
                     cube.physicsImpostor = new PhysicsImpostor(cube, PhysicsImpostor.BoxImpostor, { mass: this.cubeMass }, this.scene);
                     cube.physicsImpostor!.setLinearVelocity(Vector3.Zero());
                     cube.physicsImpostor!.sleep();
@@ -613,22 +603,35 @@ class Game
             });
         }
 
+        // Add the levers that will be used to steer the vehicle
         var lever_Task = assetsManager.addMeshTask("leverMesh", "", "assets/models/", "lever.babylon");
         lever_Task.onSuccess = ((task) => {
             lever_Task.loadedMeshes.forEach((mesh) => {
                 mesh.parent = this.leftLever_Node;
                 mesh.material = this.Materials[1];
+
                 if (mesh.name != "Handle") {
                     mesh.isPickable = false;
                 }
-                var copyMesh = new InstancedMesh(mesh.name + "_copy", <Mesh>mesh);
-                copyMesh.parent = this.rightLever_Node;
-                if (copyMesh.name != "Handle_copy") {
-                    copyMesh.isPickable = false;
-                }
+
                 this.Vehicle_Meshes.push(<Mesh>mesh);
-                this.largeObjects.push(<Mesh>mesh);                
-                mesh.visibility = 0;
+                this.largeObjects.push(<Mesh>mesh);
+
+                mesh.visibility = 0;      
+
+                // Create a copy of the lever mesh
+                if (mesh.name == "Body" || mesh.name == "Handle") {
+                    var copyMesh = mesh.clone(mesh.name + "_copy", null);
+                    copyMesh!.parent = this.rightLever_Node;
+                    if (copyMesh!.name != "Handle_copy") {
+                        copyMesh!.isPickable = false;
+                    }
+
+                    this.Vehicle_Meshes.push(<Mesh>copyMesh);
+                    this.largeObjects.push(<Mesh>copyMesh);
+
+                    copyMesh!.visibility = 0;
+                }                      
             });
         });
 
@@ -797,7 +800,7 @@ class Game
         this.ActivateWIM();
 
         // Make the left controller invisible
-        this.leftController!.pointer!.getChildMeshes().forEach((mesh) => {
+        this.leftController!.grip!.getChildMeshes().forEach((mesh) => {
             mesh.visibility = 0;
         });
 
@@ -810,7 +813,7 @@ class Game
         this.DeactivateWIM();
 
         // Make the left controller visible again
-        this.leftController!.pointer!.getChildMeshes().forEach((mesh) => {
+        this.leftController!.grip!.getChildMeshes().forEach((mesh) => {
             mesh.visibility = 1;
         });
 
@@ -841,17 +844,27 @@ class Game
 
     // Activate the WIM
     private ActivateWIM() {
-        this.miniSkybox!.visibility = 1;
+        var skyboxChildren = this.miniSkybox!.getChildMeshes();
+        for (var mesh of skyboxChildren) {
+            mesh.visibility = 1;
+        }
 
-        this.largeObjects.forEach((mesh) => {
-            var meshIndex = this.largeObjects.indexOf(mesh);
-            this.WIMObjects[meshIndex + 1].visibility = mesh.visibility;
+        this.WIMObjects.forEach((mesh) => {
+            var meshIndex = this.WIMObjects.indexOf(mesh);
+            if (meshIndex == 0) {
+                mesh.visibility = 1;
+            } else {
+                mesh.visibility = this.largeObjects[meshIndex - 1].visibility;
+            }
         });
     }
 
     // Deactivate the WIM
     private DeactivateWIM() {
-        this.miniSkybox!.visibility = 0;
+        var skyboxChildren = this.miniSkybox!.getChildMeshes();
+        for (var mesh of skyboxChildren) {
+            mesh.visibility = 0;
+        }
 
         this.WIMObjects.forEach((mesh) => {
             mesh.visibility = 0;
@@ -871,12 +884,12 @@ class Game
         meshCopy.edgesWidth = .1;
         meshCopy.visibility = mesh.visibility;
 
-        this.WIMObjects.push(meshCopy);
+        console.log(this.WIMObjects.push(meshCopy));
     }
 
     private updateMiniature(i: int) {
-        this.WIMObjects[i].position = this.selectedObject!.getAbsolutePosition().clone();
-        this.WIMObjects[i].rotationQuaternion = this.selectedObject!.absoluteRotationQuaternion;
+        //this.WIMObjects[i].position = this.selectedObject!.getAbsolutePosition().clone();
+        //this.WIMObjects[i].rotationQuaternion = this.selectedObject!.absoluteRotationQuaternion;
     }
 }
 /******* End of the Game class ******/   
