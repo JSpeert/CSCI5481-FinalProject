@@ -357,7 +357,7 @@ class Game
         DriveHereText.fontSize = 50;
         GPDyanimcTexture.addControl(DriveHereText);
 
-        this.scene.debugLayer.show(); 
+        //this.scene.debugLayer.show(); 
     }
 
     // The main update loop will be executed once per frame before the scene is rendered

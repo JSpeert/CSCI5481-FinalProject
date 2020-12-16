@@ -13,8 +13,6 @@
 * "Lever" - (https://clara.io/view/a5cfe553-839b-4300-8e37-983b2bc59205#)
 * "Mining Dump Truck" - (https://clara.io/view/c50376fa-a0ed-4963-b190-3df0fd294f21#)
 
-#### Textures
-
 #### Sounds:
 * "Backing Up Sound" - (http://soundbible.com/675-Backing-Up.html)
 * "Button Sound" (ButtonClick2) - (http://soundbible.com/772-Button.html)
