@@ -46,5 +46,5 @@
 * Drive the vehicle by selecting both levers
 	- Forward: Push both levers forward
 	- Backward: Pull both levers backward
-	- Clockwise Rotations: Left forward, Right backward
-	- Counterclockwise Rotation: Left backward, Right forward
+	- Clockwise Rotations: Left forward, Right backward (there is a bug updating the camera position)
+	- Counterclockwise Rotation: Left backward, Right forward (there is a bug updating the camera position)
