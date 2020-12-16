@@ -84,6 +84,7 @@ class Game
     private leftLeverHandle_Node: TransformNode;
     private rightLeverHandle_Node: TransformNode;
     private camera_Node: TransformNode;
+    private GoalPlane: Mesh | null;
 
     // Values to be toggled
     private GUI_Active: Boolean;
@@ -149,7 +150,8 @@ class Game
         this.leftLeverHandle_Node.parent = this.leftLever_Node;
         this.rightLeverHandle_Node = new TransformNode("RightLeverHandle", this.scene);
         this.rightLeverHandle_Node.parent = this.rightLever_Node;
-        this.camera_Node = new TransformNode("CameraNode", this.scene);      
+        this.camera_Node = new TransformNode("CameraNode", this.scene);
+        this.GoalPlane = null;
 
         this.GUI_Node = new TransformNode("GUI", this.scene);
         this.GUI_NavBarButtons = [];
@@ -336,6 +338,25 @@ class Game
         // Load External Assets (Meshes and Sounds)
         this.loadExternalAssets();  
 
+        // Create an indication of the goal position
+        this.GoalPlane = MeshBuilder.CreatePlane("Goal", { width: 5, height: 5 }, this.scene);
+        this.GoalPlane.position.y = 3;
+        this.GoalPlane.position.z = 5;
+
+        var GoalPlaneMaterial = new StandardMaterial("GoalPlane", this.scene);
+        GoalPlaneMaterial.diffuseColor = new Color3(226/255, 0, 0);
+        GoalPlaneMaterial.alpha = .5;
+        this.GoalPlane.material = GoalPlaneMaterial;
+
+        var GPDyanimcTexture = AdvancedDynamicTexture.CreateForMesh(this.GoalPlane, 1500, 1500);
+        GPDyanimcTexture.background = "red";
+
+        var DriveHereText = new TextBlock();
+        DriveHereText.text = "Drive Here to Activate the Destruction Button in the Menu";
+        DriveHereText.color = "white";
+        DriveHereText.fontSize = 50;
+        GPDyanimcTexture.addControl(DriveHereText);
+
         this.scene.debugLayer.show(); 
     }
 
@@ -358,7 +379,7 @@ class Game
         // Check the position of the controllers
         this.checkControllerPositions();
 
-        // Update the user position
+        // Check the user position
 
         // Update the vehicle
         if (this.Vehicle_Active) {
@@ -366,6 +387,13 @@ class Game
         }
 
         // Check for collision with building
+        // If the user is within the goal-space, activate the Destruction Button
+        if (this.xrCamera!.position.z > this.GoalPlane!.getAbsolutePosition().z) {
+            this.DestructionActive = true;
+            if (this.GoalPlane) {
+                this.GoalPlane!.dispose();
+            }
+        }
 
         // Update the previous controller positions for next frame
         if(this.rightController)
@@ -506,7 +534,7 @@ class Game
     private onRightThumbstick(component?: WebXRControllerComponent)
     {
         // If we have an object that is currently attached to the laser pointer
-        if (component ?.changes.axes && this.selectedObject_right && this.selectedObject_right.parent) {
+        if (component ?.changes.axes && this.selectedObject_right && this.selectedObject_right.parent && this.selectedObject_right.name != "Handle_copy") {
             // Use delta time to calculate the proper speed
             var moveDistance = -component.axes.y * (this.engine.getDeltaTime() / 1000) * 3;
 
@@ -517,7 +545,7 @@ class Game
 
     private onLeftThumbstick(component?: WebXRControllerComponent) {
         // If we have an object that is currently attached to the laser pointer
-        if (component ?.changes.axes && this.selectedObject_left && this.selectedObject_left.parent) {
+        if (component ?.changes.axes && this.selectedObject_left && this.selectedObject_left.parent && this.selectedObject_left.name != "Handle") {
             // Use delta time to calculate the proper speed
             var moveDistance = -component.axes.y * (this.engine.getDeltaTime() / 1000) * 3;
 
@@ -756,7 +784,7 @@ class Game
 
         this.rightLever_Node.position = new Vector3(0.4, 5.29, 7.12);
         this.rightLever_Node.rotation = new Vector3(0, Math.PI / 2, 0);
-        this.rightLever_Node.scaling = new Vector3(0.01, 0.02, 0.01);
+        this.rightLever_Node.scaling = new Vector3(0.01, 0.02, 0.01);    
 
         this.Vehicle_Node.position = new Vector3(0, -1.2, 0);
         this.Vehicle_Node.rotation = new Vector3(0, Math.PI, 0);
@@ -764,6 +792,9 @@ class Game
 
         this.leftLever_Node.setParent(this.Vehicle_Node);
         this.rightLever_Node.setParent(this.Vehicle_Node);
+
+        this.camera_Node.parent = this.Vehicle_Node;
+        this.camera_Node.position = new Vector3(0, 5.5, 6.3);
     }
 
     // The GUI will be placed on the left hand
@@ -1150,12 +1181,7 @@ class Game
                 this.camera_Node.setParent(null);
                 this.xrCamera!.position.x += this.camera_Node.position.x - this.xrCamera!.position.x;
                 this.xrCamera!.position.z += this.camera_Node.position.z - this.xrCamera!.position.z + 6.3;
-                this.camera_Node.setParent(this.Vehicle_Node);
-
-                // If the vehicle is within the goal-space, activate the Destruction Button
-                //if () {
-                  //  this.DestructionActive = true;
-                //}
+                this.camera_Node.setParent(this.Vehicle_Node);               
             }
         }
     }
@@ -1259,9 +1285,7 @@ class Game
 
     // Enter the vehicle
     private EnterVehicleMode() {
-        this.vehicleMode_Sound!.play();
-        this.camera_Node.parent = this.Vehicle_Node;
-        this.camera_Node.position = new Vector3(0, 5.5, 6.3);      
+        this.vehicleMode_Sound!.play();     
 
         this.Vehicle_Meshes.forEach((mesh) => {
             mesh.visibility = 1;
